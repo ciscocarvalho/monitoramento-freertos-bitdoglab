@@ -4,54 +4,66 @@
 #include <stdio.h>
 #include "semphr.h"
 
+#define LED_PIN 12
+#define BUTTON_B 6
+
 QueueHandle_t dataQueue;
 
-void vSensorTask(void *pvParameters) {
-    float sensorData = 0;
+bool isButtonPressed(uint8_t buttonPin) {
+    return gpio_get(buttonPin) == 0;
+}
+
+void vTask1(void *pvParameters) {
+    bool buttonPressed = false;
 
     for (;;) {
-        sensorData = read_onboard_temperature();
-        xQueueSend(dataQueue, &sensorData, portMAX_DELAY);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        buttonPressed = isButtonPressed(BUTTON_B);
+        xQueueSend(dataQueue, &buttonPressed, portMAX_DELAY);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
 
-void vProcessingTask(void *pvParameters) {
-    float receivedData;
-    static uint cnt = 0;
-    static float avg = 0;
+void vTask2(void *pvParameters) {
+    bool buttonPressed;
 
     for (;;) {
-        if (xQueueReceive(dataQueue, &receivedData, portMAX_DELAY) == pdTRUE) {
-            cnt++;
-            avg += receivedData;
-
-            if (cnt == 10) {
-                cnt = 0;
-                avg /= 10;
-                printf("Media: %f\n", avg);
-                avg = 0;
+        if (xQueueReceive(dataQueue, &buttonPressed, portMAX_DELAY) == pdTRUE) {
+            if (buttonPressed) {
+                xQueueSend(dataQueue, &buttonPressed, portMAX_DELAY);
             }
+        }
+    }
+}
+
+void vTask3(void *pvParameters) {
+    bool buttonPressed;
+
+    for (;;) {
+        if (xQueueReceive(dataQueue, &buttonPressed, portMAX_DELAY) == pdTRUE) {
+            gpio_put(LED_PIN, buttonPressed);
         }
     }
 }
 
 void setup(void) {
     stdio_init_all();
-    adc_init();
-    adc_set_temp_sensor_enabled(true);
+    gpio_init(LED_PIN);
+    gpio_set_dir(LED_PIN, GPIO_OUT);
+
+    gpio_init(BUTTON_B);
+    gpio_set_dir(BUTTON_B, GPIO_IN);
+    gpio_pull_up(BUTTON_B);
 };
 
 int main(void) {
-    stdio_init_all();
-
     setup();
 
     dataQueue = xQueueCreate(5, sizeof(float));
 
     if (dataQueue != NULL) {
-        xTaskCreate(vSensorTask, "Sensor Task", 128, NULL, 1, NULL);
-        xTaskCreate(vProcessingTask, "Processing Task", configMINIMAL_STACK_SIZE * 4, NULL, 1, NULL);
+        xTaskCreate(vTask1, "Task 1", 128, NULL, 1, NULL);
+        xTaskCreate(vTask2, "Task 2", 128, NULL, 1, NULL);
+        xTaskCreate(vTask3, "Task 3", 128, NULL, 1, NULL);
         vTaskStartScheduler();
     }
 }
