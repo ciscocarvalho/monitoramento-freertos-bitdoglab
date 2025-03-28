@@ -2,27 +2,43 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include <stdio.h>
+#include "semphr.h"
 
-const uint led_pin = 12;
+SemaphoreHandle_t xMutex;
+int sharedCounter = 0;
 
-void vBlinkTask() {
+void vTask1(void *pvParameters) {
     for (;;) {
-        gpio_put(led_pin, 1);
+        if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
+            sharedCounter++;
+            printf("Task 1: Counter = %d\n", sharedCounter);
+            xSemaphoreGive(xMutex);
+        }
 
-        vTaskDelay(250);
-
-        gpio_put(led_pin, 0);
-
-        vTaskDelay(250);
-
-        printf("Blinking\n");
+        vTaskDelay(250 / portTICK_PERIOD_MS);
     }
 }
 
-int main() {
+void vTask2(void *pvParameters) {
+    for (;;) {
+        if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
+            sharedCounter++;
+            printf("Task 2: Counter = %d\n", sharedCounter);
+            xSemaphoreGive(xMutex);
+        }
+
+        vTaskDelay(700 / portTICK_PERIOD_MS);
+    }
+}
+
+int main(void) {
     stdio_init_all();
-    gpio_init(led_pin);
-    gpio_set_dir(led_pin, GPIO_OUT);
-    xTaskCreate(vBlinkTask, "Blink Task", 128, NULL, 1, NULL);
-    vTaskStartScheduler();
+
+    xMutex = xSemaphoreCreateMutex();
+
+    if (xMutex != NULL) {
+        xTaskCreate(vTask1, "Task 1", 256, NULL, 1, NULL);
+        xTaskCreate(vTask2, "Task 2", 256, NULL, 1, NULL);
+        vTaskStartScheduler();
+    }
 }
