@@ -4,41 +4,54 @@
 #include <stdio.h>
 #include "semphr.h"
 
-SemaphoreHandle_t xMutex;
-int sharedCounter = 0;
+QueueHandle_t dataQueue;
 
-void vTask1(void *pvParameters) {
+void vSensorTask(void *pvParameters) {
+    float sensorData = 0;
+
     for (;;) {
-        if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
-            sharedCounter++;
-            printf("Task 1: Counter = %d\n", sharedCounter);
-            xSemaphoreGive(xMutex);
-        }
-
-        vTaskDelay(250 / portTICK_PERIOD_MS);
+        sensorData = read_onboard_temperature();
+        xQueueSend(dataQueue, &sensorData, portMAX_DELAY);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
-void vTask2(void *pvParameters) {
-    for (;;) {
-        if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
-            sharedCounter++;
-            printf("Task 2: Counter = %d\n", sharedCounter);
-            xSemaphoreGive(xMutex);
-        }
+void vProcessingTask(void *pvParameters) {
+    float receivedData;
+    static uint cnt = 0;
+    static float avg = 0;
 
-        vTaskDelay(700 / portTICK_PERIOD_MS);
+    for (;;) {
+        if (xQueueReceive(dataQueue, &receivedData, portMAX_DELAY) == pdTRUE) {
+            cnt++;
+            avg += receivedData;
+
+            if (cnt == 10) {
+                cnt = 0;
+                avg /= 10;
+                printf("Media: %f\n", avg);
+                avg = 0;
+            }
+        }
     }
 }
+
+void setup(void) {
+    stdio_init_all();
+    adc_init();
+    adc_set_temp_sensor_enabled(true);
+};
 
 int main(void) {
     stdio_init_all();
 
-    xMutex = xSemaphoreCreateMutex();
+    setup();
 
-    if (xMutex != NULL) {
-        xTaskCreate(vTask1, "Task 1", 256, NULL, 1, NULL);
-        xTaskCreate(vTask2, "Task 2", 256, NULL, 1, NULL);
+    dataQueue = xQueueCreate(5, sizeof(float));
+
+    if (dataQueue != NULL) {
+        xTaskCreate(vSensorTask, "Sensor Task", 128, NULL, 1, NULL);
+        xTaskCreate(vProcessingTask, "Processing Task", configMINIMAL_STACK_SIZE * 4, NULL, 1, NULL);
         vTaskStartScheduler();
     }
 }
